@@ -1,5 +1,5 @@
 import { Server, Socket } from 'socket.io';
-import prisma from "./prismaSchema";
+import prisma from './prismaSchema';
 
 interface GamePlayer {
   id: string;
@@ -13,34 +13,42 @@ interface GamePlayer {
 const gameState = {
   targetFrequency: 440,
   players: new Map<string, GamePlayer>(),
+  roundActive: false,
 };
 
 const FREQUENCY_TOLERANCE = 150;
 const SCORE_INCREMENT = 10;
 
-// Remove automatic frequency interval!
-
 export function setupGameSockets(io: Server, socket: Socket) {
+
+  // Start round
   socket.on('startRound', () => {
-    // Generate new target frequency
-    gameState.targetFrequency = 200 + Math.random() * 600;
-    console.log(`🎯 New target frequency: ${Math.round(gameState.targetFrequency)} Hz`);
+    if (!gameState.roundActive) {
+      gameState.targetFrequency = 256 + Math.random() * (2048 - 256);
+      gameState.roundActive = true;
 
-    // Reset match status
-    gameState.players.forEach(player => (player.isMatched = false));
+      // Reset all player matches
+      gameState.players.forEach(p => p.isMatched = false);
 
-    // Emit to all clients
-    io.emit('gameStateUpdate', {
-      targetFrequency: gameState.targetFrequency,
-      players: Object.fromEntries(gameState.players.entries()),
-    });
+      io.emit('gameStateUpdate', {
+        event: 'startRound',
+        roundActive: true,
+        targetFrequency: gameState.targetFrequency,
+        players: Object.fromEntries(gameState.players.entries()),
+      });
+
+      console.log('🎯 New target frequency:', Math.round(gameState.targetFrequency));
+    }
   });
 
+  // Submit round
   socket.on('submitRound', async () => {
-    // Check matches and update scores
+    if (!gameState.roundActive) return;
+
     for (const player of gameState.players.values()) {
       const isMatched = Math.abs(player.currentFrequency - gameState.targetFrequency) < FREQUENCY_TOLERANCE;
       player.isMatched = isMatched;
+
       if (isMatched) {
         player.streak++;
         player.score += SCORE_INCREMENT + player.streak;
@@ -48,24 +56,25 @@ export function setupGameSockets(io: Server, socket: Socket) {
         player.streak = 0;
       }
 
-      // Sync to database
       await prisma.player.update({
         where: { id: player.id },
         data: { score: player.score, streak: player.streak },
       });
     }
 
+    gameState.roundActive = false;
+
     io.emit('gameStateUpdate', {
-      targetFrequency: gameState.targetFrequency,
+      event: 'submitRound',
+      roundActive: false,
       players: Object.fromEntries(gameState.players.entries()),
     });
   });
 
+  // Player frequency update
   socket.on('playerUpdate', ({ frequency }: { frequency: number }) => {
     const player = gameState.players.get(socket.id);
-    if (player) {
-      player.currentFrequency = frequency;
-    }
+    if (player) player.currentFrequency = frequency;
   });
 }
 
