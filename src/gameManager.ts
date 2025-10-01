@@ -27,7 +27,7 @@ export function setupGameSockets(io: Server, socket: Socket) {
       gameState.targetFrequency = 256 + Math.random() * (2048 - 256);
       gameState.roundActive = true;
 
-      // Reset all player matches
+      // Reset matches
       gameState.players.forEach(p => p.isMatched = false);
 
       io.emit('gameStateUpdate', {
@@ -71,7 +71,7 @@ export function setupGameSockets(io: Server, socket: Socket) {
     });
   });
 
-  // Player frequency update
+  // Player frequency update (only update value, no scoring)
   socket.on('playerUpdate', ({ frequency }: { frequency: number }) => {
     const player = gameState.players.get(socket.id);
     if (player) player.currentFrequency = frequency;
