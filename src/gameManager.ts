@@ -1,4 +1,4 @@
-import { Server, Socket } from "socket.io";
+import { Server, Socket } from 'socket.io';
 import prisma from "./prismaSchema";
 
 interface GamePlayer {
@@ -15,55 +15,65 @@ const gameState = {
   players: new Map<string, GamePlayer>(),
 };
 
-const FREQUENCY_TOLERANCE = 100;
+const FREQUENCY_TOLERANCE = 150;
 const SCORE_INCREMENT = 10;
 
-export function setupGameHandlers(io: Server, socket: Socket) {
-  // ✅ Start a new round
-  socket.on("startRound", () => {
-    gameState.targetFrequency = 200 + Math.random() * 600;
-    console.log(`🎯 New round started! Target = ${Math.round(gameState.targetFrequency)} Hz`);
+// Remove automatic frequency interval!
 
-    io.emit("gameStateUpdate", {
+export function setupGameSockets(io: Server, socket: Socket) {
+  socket.on('startRound', () => {
+    // Generate new target frequency
+    gameState.targetFrequency = 200 + Math.random() * 600;
+    console.log(`🎯 New target frequency: ${Math.round(gameState.targetFrequency)} Hz`);
+
+    // Reset match status
+    gameState.players.forEach(player => (player.isMatched = false));
+
+    // Emit to all clients
+    io.emit('gameStateUpdate', {
       targetFrequency: gameState.targetFrequency,
       players: Object.fromEntries(gameState.players.entries()),
     });
   });
 
-  // ✅ Submit frequency for scoring
-  socket.on("submitFrequency", () => {
-    const player = gameState.players.get(socket.id);
-    if (!player) return;
+  socket.on('submitRound', async () => {
+    // Check matches and update scores
+    for (const player of gameState.players.values()) {
+      const isMatched = Math.abs(player.currentFrequency - gameState.targetFrequency) < FREQUENCY_TOLERANCE;
+      player.isMatched = isMatched;
+      if (isMatched) {
+        player.streak++;
+        player.score += SCORE_INCREMENT + player.streak;
+      } else {
+        player.streak = 0;
+      }
 
-    const isMatched =
-      Math.abs(player.currentFrequency - gameState.targetFrequency) <
-      FREQUENCY_TOLERANCE;
-
-    player.isMatched = isMatched;
-
-    if (isMatched) {
-      player.streak++;
-      player.score += SCORE_INCREMENT + player.streak;
-    } else {
-      player.streak = 0;
+      // Sync to database
+      await prisma.player.update({
+        where: { id: player.id },
+        data: { score: player.score, streak: player.streak },
+      });
     }
 
-    io.emit("gameStateUpdate", {
+    io.emit('gameStateUpdate', {
       targetFrequency: gameState.targetFrequency,
       players: Object.fromEntries(gameState.players.entries()),
     });
+  });
+
+  socket.on('playerUpdate', ({ frequency }: { frequency: number }) => {
+    const player = gameState.players.get(socket.id);
+    if (player) {
+      player.currentFrequency = frequency;
+    }
   });
 }
 
-// ✅ Add player
 export async function addPlayer(socket: Socket, playerId: string) {
   const dbPlayer = await prisma.player.findUnique({ where: { id: playerId } });
   if (!dbPlayer) return;
 
-  await prisma.player.update({
-    where: { id: playerId },
-    data: { status: "playing" },
-  });
+  await prisma.player.update({ where: { id: playerId }, data: { status: 'playing' } });
 
   const newPlayer: GamePlayer = {
     id: dbPlayer.id,
@@ -75,26 +85,17 @@ export async function addPlayer(socket: Socket, playerId: string) {
   };
 
   gameState.players.set(socket.id, newPlayer);
-  console.log(`✅ Player ${dbPlayer.name} [${socket.id}] connected`);
+  console.log(`Player ${dbPlayer.name} [${socket.id}] connected.`);
 }
 
-// ✅ Remove player
 export async function removePlayer(socket: Socket) {
   const player = gameState.players.get(socket.id);
   if (player) {
-    console.log(`❌ Player ${player.name} [${socket.id}] disconnected`);
+    console.log(`Player ${player.name} [${socket.id}] disconnected.`);
     await prisma.player.update({
       where: { id: player.id },
-      data: { score: player.score, status: "offline" },
+      data: { score: player.score, status: 'offline' },
     });
     gameState.players.delete(socket.id);
-  }
-}
-
-// ✅ Update frequency live (from MediaPipe)
-export function updatePlayerFrequency(socket: Socket, frequency: number) {
-  const player = gameState.players.get(socket.id);
-  if (player) {
-    player.currentFrequency = frequency;
   }
 }
