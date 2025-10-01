@@ -15,7 +15,7 @@ const gameState = {
   players: new Map<string, GamePlayer>(),
 };
 
-const FREQUENCY_TOLERANCE = 300;
+const FREQUENCY_TOLERANCE = 100;
 const SCORE_INCREMENT = 10;
 
 export function setupGameHandlers(io: Server, socket: Socket) {
